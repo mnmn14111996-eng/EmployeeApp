@@ -11,7 +11,9 @@ app = Flask(__name__)
 
 # استدعاء المتغيرات السرية من إعدادات Vercel
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'default_secret')
-VAPID_PRIVATE_KEY = os.environ.get('VAPID_PRIVATE_KEY')
+VAPID_PRIVATE_KEY = os.environ.get('MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgVcwefgP8oUSQhWPE
+AqpbWl50nhXEhGWQD1RQwpbzr1mhRANCAAT1ALSM4Z9i6rRHPeUC3lp1/Ety29sR
+NYI/3DtI1/sMpnblcl5XEm7TNM39gUu0GtludTj7HPY21kHVRlyHUaGp')
 VAPID_CLAIMS = {"sub": "mailto:admin@example.com"}
 
 # الاتصال بقاعدة بيانات Vercel KV (Redis)
