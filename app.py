@@ -6,7 +6,7 @@ from flask import Flask, request, jsonify, send_file
 from pywebpush import webpush, WebPushException
 import jwt
 import redis
-
+from flask import Flask
 app = Flask(__name__)
 
 # استدعاء المتغيرات السرية من إعدادات Vercel
