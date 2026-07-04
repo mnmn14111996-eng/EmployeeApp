@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>بوابة الموظفين</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f4f7f6; padding: 20px; text-align: center; }
+        .container { max-width: 400px; margin: auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        input, button { width: 90%; padding: 10px; margin: 10px 0; border-radius: 5px; border: 1px solid #ccc; box-sizing: border-box; }
+        button { background: #007bff; color: white; border: none; cursor: pointer; font-size: 16px; font-weight: bold; }
+        button:hover { background: #0056b3; }
+        .hidden { display: none; }
+        .hr-line { margin: 20px 0; border-top: 1px solid #eee; }
+    </style>
+</head>
+<body>
+
+    <div class="container" id="login-section">
+        <h2>تسجيل الدخول</h2>
+        <input type="text" id="phone" placeholder="أدخل رقم الهاتف (مثال: 0770000000)">
+        <button onclick="login()">دخول</button>
+        <p id="login-msg" style="color: red; font-size: 14px;"></p>
+    </div>
+
+    <div class="container hidden" id="dashboard-section">
+        <h2>لوحة التحكم</h2>
+        <p>مرحباً بك في النظام</p>
+        <button onclick="enableNotifications()">🔔 تفعيل الإشعارات</button>
+        <p id="sub-msg" style="font-size: 14px;"></p>
+        
+        <div class="hr-line"></div>
+        
+        <h3>إرسال تبليغ (للمدير)</h3>
+        <input type="text" id="target-phone" placeholder="رقم هاتف الموظف">
+        <input type="text" id="message" placeholder="نص التبليغ">
+        <button onclick="sendNotification()" style="background: #28a745;">إرسال التبليغ</button>
+        <p id="admin-msg" style="font-size: 14px; font-weight: bold;"></p>
+    </div>
+
+    <script>
+        // ⚠️ ضع المفتاح العام الخاص بك هنا بين علامتي التنصيص
+        const publicVapidKey = 'YOUR_VAPID_PUBLIC_KEY_HERE'; 
+
+        async function login() {
+            const phone = document.getElementById('phone').value;
+            document.getElementById('login-msg').innerText = "جاري التحقق...";
+            const res = await fetch('/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phone: phone })
+            });
+            const data = await res.json();
+            
+            if (res.ok) {
+                localStorage.setItem('token', data.token);
+                document.getElementById('login-section').classList.add('hidden');
+                document.getElementById('dashboard-section').classList.remove('hidden');
+            } else {
+                document.getElementById('login-msg').innerText = data.message;
+            }
+        }
+
+        async function enableNotifications() {
+            if ('serviceWorker' in navigator && 'PushManager' in window) {
+                try {
+                    const register = await navigator.serviceWorker.register('/sw.js');
+                    const permission = await Notification.requestPermission();
+                    if (permission !== 'granted') throw new Error('لم يتم منح إذن الإشعارات');
+
+                    const subscription = await register.pushManager.subscribe({
+                        userVisibleOnly: true,
+                        applicationServerKey: urlBase64ToUint8Array(publicVapidKey)
+                    });
+
+                    await fetch('/subscribe', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + localStorage.getItem('token')
+                        },
+                        body: JSON.stringify({ subscription: subscription })
+                    });
+
+                    document.getElementById('sub-msg').innerText = "✅ تم تفعيل الإشعارات بنجاح.";
+                    document.getElementById('sub-msg').style.color = "green";
+                } catch (error) {
+                    document.getElementById('sub-msg').innerText = "❌ فشل التفعيل: يجب السماح بالإشعارات في المتصفح.";
+                    document.getElementById('sub-msg').style.color = "red";
+                }
+            } else {
+                alert("متصفحك لا يدعم هذه الميزة.");
+            }
+        }
+
+        async function sendNotification() {
+            const target = document.getElementById('target-phone').value;
+            const msg = document.getElementById('message').value;
+            document.getElementById('admin-msg').innerText = "جاري الإرسال...";
+            document.getElementById('admin-msg').style.color = "black";
+            
+            const res = await fetch('/send_notification', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + localStorage.getItem('token')
+                },
+                body: JSON.stringify({ target_phone: target, message: msg })
+            });
+            const data = await res.json();
+            document.getElementById('admin-msg').innerText = data.message || data.error;
+            document.getElementById('admin-msg').style.color = res.ok ? "green" : "red";
+        }
+
+        function urlBase64ToUint8Array(base64String) {
+            const padding = '='.repeat((4 - base64String.length % 4) % 4);
+            const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
+            const rawData = window.atob(base64);
+            const outputArray = new Uint8Array(rawData.length);
+            for (let i = 0; i < rawData.length; ++i) { outputArray[i] = rawData.charCodeAt(i); }
+            return outputArray;
+        }
+    </script>
+</body>
+</html>
