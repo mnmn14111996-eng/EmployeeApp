@@ -6,26 +6,23 @@ from flask import Flask, request, jsonify, send_file
 from pywebpush import webpush, WebPushException
 import jwt
 import redis
-from flask import Flask
+
+# تهيئة تطبيق Flask - هذا السطر ضروري جداً لـ Vercel
 app = Flask(__name__)
 
-# استدعاء المتغيرات السرية من إعدادات Vercel
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'default_secret')
-VAPID_PRIVATE_KEY = os.environ.get('MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgVcwefgP8oUSQhWPE
-AqpbWl50nhXEhGWQD1RQwpbzr1mhRANCAAT1ALSM4Z9i6rRHPeUC3lp1/Ety29sR
-NYI/3DtI1/sMpnblcl5XEm7TNM39gUu0GtludTj7HPY21kHVRlyHUaGp')
+# إعداد المتغيرات السرية من بيئة Vercel
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'default_secret_key')
+VAPID_PRIVATE_KEY = os.environ.get('VAPID_PRIVATE_KEY')
 VAPID_CLAIMS = {"sub": "mailto:admin@example.com"}
 
-# الاتصال بقاعدة بيانات Vercel KV (Redis)
+# الاتصال بقاعدة بيانات Vercel KV
 KV_URL = os.environ.get('KV_URL')
-if KV_URL:
-    vercel_kv = redis.from_url(KV_URL, decode_responses=True)
-else:
-    vercel_kv = None
+vercel_kv = redis.from_url(KV_URL, decode_responses=True) if KV_URL else None
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# مسارات عرض الواجهة
+# --- المسارات ---
+
 @app.route('/')
 def index():
     return send_file(os.path.join(BASE_DIR, 'index.html'))
@@ -34,7 +31,8 @@ def index():
 def service_worker():
     return send_file(os.path.join(BASE_DIR, 'sw.js'), mimetype='application/javascript')
 
-# طبقة التحقق من التوكن
+# --- دوال المساعدة ---
+
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -46,63 +44,45 @@ def token_required(f):
             data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
             current_user = data['phone']
         except:
-            return jsonify({'message': 'التوكن غير صالح أو منتهي! يرجى تسجيل الدخول مجدداً.'}), 401
+            return jsonify({'message': 'التوكن غير صالح!'}), 401
         return f(current_user, *args, **kwargs)
     return decorated
 
-# تسجيل الدخول
+# --- APIs ---
+
 @app.route('/login', methods=['POST'])
 def login():
-    data = request.json
-    phone = data.get('phone')
-    user_key = f"emp:{phone}"
-    
-    if vercel_kv and vercel_kv.exists(user_key):
-        token = jwt.encode({
-            'phone': phone,
-            'exp': datetime.datetime.utcnow() + datetime.timedelta(days=7)
-        }, app.config['SECRET_KEY'], algorithm="HS256")
+    phone = request.json.get('phone')
+    if vercel_kv and vercel_kv.exists(f"emp:{phone}"):
+        token = jwt.encode({'phone': phone, 'exp': datetime.datetime.utcnow() + datetime.timedelta(days=7)}, 
+                           app.config['SECRET_KEY'], algorithm="HS256")
         return jsonify({'token': token})
-        
-    return jsonify({'message': 'رقم الهاتف غير مسجل، يرجى التسجيل عبر بوت التليجرام أولاً.'}), 401
+    return jsonify({'message': 'رقم الهاتف غير مسجل'}), 401
 
-# حفظ اشتراك الإشعارات
 @app.route('/subscribe', methods=['POST'])
 @token_required
 def subscribe(current_user):
     sub_info = request.json.get('subscription')
-    user_key = f"emp:{current_user}"
-    
-    if vercel_kv and vercel_kv.exists(user_key):
-        vercel_kv.hset(user_key, "push_sub", json.dumps(sub_info))
-        return jsonify({'message': 'تم الحفظ بنجاح'})
-        
-    return jsonify({'error': 'غير مصرح'}), 403
+    if vercel_kv:
+        vercel_kv.hset(f"emp:{current_user}", "push_sub", json.dumps(sub_info))
+        return jsonify({'message': 'تم الحفظ'})
+    return jsonify({'error': 'قاعدة البيانات غير متاحة'}), 500
 
-# إرسال إشعار
 @app.route('/send_notification', methods=['POST'])
 @token_required
 def send_notification(current_user):
-    target_phone = request.json.get('target_phone')
-    message = request.json.get('message')
-    target_key = f"emp:{target_phone}"
+    target = request.json.get('target_phone')
+    msg = request.json.get('message')
+    data = vercel_kv.hgetall(f"emp:{target}") if vercel_kv else None
     
-    if not vercel_kv:
-        return jsonify({'error': 'قاعدة البيانات غير متصلة'}), 500
-        
-    employee_data = vercel_kv.hgetall(target_key)
-    
-    if employee_data and "push_sub" in employee_data:
-        push_sub = json.loads(employee_data["push_sub"])
+    if data and "push_sub" in data:
         try:
-            webpush(
-                subscription_info=push_sub,
-                data=json.dumps({"title": "تبليغ إداري جديد", "body": message}),
-                vapid_private_key=VAPID_PRIVATE_KEY,
-                vapid_claims=VAPID_CLAIMS
-            )
-            return jsonify({'message': '✅ تم إرسال الإشعار للموظف بنجاح'})
-        except WebPushException as ex:
-            return jsonify({'error': '❌ فشل إرسال الإشعار', 'details': str(ex)}), 500
-            
-    return jsonify({'error': '❌ الموظف غير موجود أو لم يقم بتفعيل الإشعارات من الموقع'}), 404
+            webpush(json.loads(data["push_sub"]), json.dumps({"title": "تبليغ إداري", "body": msg}), 
+                    VAPID_PRIVATE_KEY, VAPID_CLAIMS)
+            return jsonify({'message': '✅ تم الإرسال'})
+        except Exception as e:
+            return jsonify({'error': f'❌ فشل الإرسال: {str(e)}'}), 500
+    return jsonify({'error': 'الموظف غير موجود'}), 404
+
+if __name__ == '__main__':
+    app.run()
